@@ -1,2 +1,4 @@
 node_modules
 *.log
+sign/powerled*.exe
+sign/LibCon-ahk
