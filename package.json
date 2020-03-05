@@ -1,0 +1,25 @@
+{
+  "name": "pl4-server",
+  "version": "1.0.0",
+  "main": "src/index.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "nodemon src/index.js",
+    "start:prod": "node src/index.js",
+    "sign": "nodemon sign/index.js",
+    "build": "Ahk2Exe.exe /in .\\sign\\powerled.ahk /out .\\sign\\powerled.exe"
+  },
+  "dependencies": {
+    "@koa/router": "^8.0.8",
+    "eventsource": "^1.0.7",
+    "jsonwebtoken": "^8.5.1",
+    "koa": "^2.11.0",
+    "koa-bodyparser": "^4.2.1",
+    "koa-logger": "^3.2.1",
+    "koa-sse-stream": "^0.2.0",
+    "ttn": "^2.3.3"
+  },
+  "devDependencies": {
+    "nodemon": "^2.0.2"
+  }
+}
