@@ -1,152 +1,147 @@
+#! /usr/bin/env node
+
 /*
  * SLI PL4 - Central Server
  * by Madhav Varshney
- * 
+ *
  * Routes:
- * 
- * GET   /dashboard   Web dashboard for viewing and modifying the car count
- * POST  /event       Endpoint for sending events; timestamp is the milliseconds since Epoch
- *                    Format: { timestamp: #, type: "IN" | "OUT" } 
- * EVT   /stream      EventSource stream for receiving events, e.g. car count updates
- *                    Receives "sensor_event" and "count_change" events
+ *
+ * GET   /dashboard     Web dashboard for viewing and modifying the car count
+ * POST  /admin/event   Endpoint for manually sending events
+ *                      Body Params: { timestamp, type } 
+ * GET   /count         Get current car count
+ *                      Response: { status, count }
+ * EVS   /stream        EventSource stream for receiving events, i.e. car count updates
+ *                      Receives "sensor_event" and "count_change" events
+ * POST  /handshake     Endpoint to establish connection with controllers
+ *                      and receive public keys for identity verification
+ *                      Body Params: { device_id, public_key: "" }
+ * POST  /event         Recieves events from controllers i.e. camera controllers
+ *                      Body Params: { device_id, token: JWT }
+ *                      JWT: { device_id, type, timestamp }
+ *
+ * Data Formats:
+ *
+ * ""    status         "success" | "failed"
+ * ""    device_id      The ID of the device
+ * #     timestamp      Milliseconds since Epoch
+ * ""    type           "IN" | "OUT"
+ * #     count          The number of available parking lot spots
+ * JWT   token          A JSON Webtoken that is signed using device-specific private keys
+ *
  */
 
 const Koa = require('koa');
+const Router = require('@koa/router');
 const logger = require('koa-logger');
 const sse = require('koa-sse-stream');
-const Router = require('@koa/router');
 const bodyParser = require('koa-bodyparser');
+const jwt = require('jsonwebtoken');
+
 const { Subscription } = require('./db');
+const { htmlPage } = require('./dashboard');
+const { connectToTTN } = require('./ttn-client');
 
 const app = new Koa();
 const router = new Router();
 const db = new Subscription();
 
-// let count = 0;
+const devices = {};
 
-const htmlData = `<!DOCTYPE html>
-<html>
-<head>
-  <title>SLI PL4 Dashboard</title>
-  <style>
-    * {
-      box-sizing: border-box;
-    }
-    html, body {
-      font-family: Verdana;
-      height: 100%;
-      padding: 0;
-      margin: 0;
-    }
-    body {
-      padding: 0px 24px 24px 24px;
-      display: flex;
-      flex-direction: column;
-    }
-    button:hover {
-      background-color: #4caf50cf;
-    }
-    button {
-      display: inline-block;
-      padding: 12px;
-      font-family: Verdana;
-      font-size: 16px;
-      background-color: #4CAF50; /* Green */
-      border: none;
-      color: white;
-      text-align: center;
-      text-decoration: none;
-      cursor: pointer;
-    }
-    #events {
-      flex: 1;
-      overflow: auto;
-      border: black 1px solid;
-      padding: 0 24px;
-    }
-  </style>  
-</head>
-<body>
-  <h2>SLI PL4 Dashboard</h2>
-  <h3>Car Count: <span id="count"></span></h3>
-  <span style="margin: 12px 0">
-    <button onclick="increment()">INCREMENT</button>
-    <button onclick="decrement()">DECREMENT</button>
-  </span>
-  <h4>Events:</h4>
-  <div id="events"></div>
-  <script>
-    var es = new EventSource('/stream');
-    var display = document.getElementById('count');
-    var eventsDiv = document.getElementById('events');
-    
-    function increment() {
-      sendEvent('IN');
-    }
-    function decrement() {
-      sendEvent('OUT');
-    }
-    async function sendEvent(type) {
-      var now = Date.now();
-      var req = await fetch('/event', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          timestamp: now,
-          type,
-        }),
-      });
-      var res = await req.json();
-      if (res.status === 'failed' && res.error) {
-        var eventItem = document.createElement('p');
-        eventItem.innerHTML = new Date(now).toLocaleString() + " - <b> ERROR: " + res.error + "</b>";
-        eventsDiv.appendChild(eventItem);
-        eventsDiv.scrollTop = eventsDiv.scrollHeight;
-      }
-    }
-    es.addEventListener('count_change', function (e) {
-      display.innerText = e.data;
-    });
-    es.addEventListener('sensor_event', function (e) {
-      var event = JSON.parse(e.data);
-      console.log(event);
+function registerDevice(id, key) {
+  devices[id] = { key };
+  console.log(`Device with id ${id} registered`);
+}
 
-      var eventItem = document.createElement('p');
-      eventItem.innerHTML = new Date(event.timestamp).toLocaleString() + " - Direction: <b>" + event.type + "</b>";
-      eventsDiv.appendChild(eventItem);
-      eventsDiv.scrollTop = eventsDiv.scrollHeight;
-    });
-  </script>
-</body>
-</html>`;
+// TODO: don't hardcode the string below
+const appID = process.env.TTN_APP_ID || 'try-2';
+const accessKey = process.env.TTN_ACCESS_KEY;
+if (appID && appID !== '' && accessKey && accessKey != '') {
+  connectToTTN(db, appID, accessKey);
+}
 
 app.use(logger());
 app.use(bodyParser());
 
 router.get(['/', '/dashboard'], async function(ctx) {
-  ctx.response.headers['Content-Type'] = 'text/html';
-  ctx.body = htmlData;
+  ctx.type = 'text/html';
+  ctx.body = htmlPage;
 });
 
-router.post('/event', async function(ctx) {
+router.post('/handshake', async function (ctx) {
+  const { device_id, public_key } = ctx.request.body;
+  if (!device_id, !public_key) {
+    ctx.status = 400;
+    ctx.body = { status: 'failed', error: 'Required parameters not provided.' };
+    return;
+  }
+
+  // TODO: add manual approval system
+  registerDevice(device_id, public_key);
+  ctx.body = { status: 'success' };
+});
+
+router.post('/event', async function (ctx) {
+  const { device_id, token } = ctx.request.body;
+  const device = devices[device_id];
+  if (!token || !device) {
+    ctx.status = 400;
+    return;
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, device.key);
+    // console.log(decoded);
+  } catch (err) {
+    if (err instanceof jwt.TokenExpiredError) {
+      ctx.status = 401;
+      ctx.body = { status: 'failed', error: "JWT Token Expired" };
+      return;
+    } else {
+      throw err;
+    }
+  }
+
+  const event = {
+    type: decoded.type,
+    timestamp: decoded.timestamp,
+    device_id: decoded.device_id,
+  };
+  // console.log(event);
+  try {
+    db.onEvent(event);
+    ctx.body = { status: 'success' };
+  } catch (err) {
+    ctx.status = 400;
+    ctx.body = { status: 'failed', error: err.message };
+  }
+});
+
+router.post('/admin/event', async function(ctx) {
   const event = ctx.request.body || {};
   console.log(event);
   try {
     db.onEvent(event);
-    ctx.response.headers['Content-Type'] = 'application/json';
-    ctx.body = JSON.stringify({ status: 'success' });
+    ctx.body = { status: 'success' };
   } catch (err) {
     ctx.status = 400;
-    ctx.response.headers['Content-Type'] = 'application/json';
-    ctx.body = JSON.stringify({ status: 'failed', error: err.message });
+    ctx.body = { status: 'failed', error: err.message };
   }
 });
 
+// TODO: add some auth (e.g. API key check)
+router.get('/count', async function (ctx) {
+  ctx.body = { status: 'success', count: db.value };
+});
+
+// TODO: add some auth (e.g. API key check)
 router.get('/stream', sse({
   maxClients: 5000,
   pingInterval: 60000,
 }));
 
+// TODO: add some auth (e.g. API key check)
 router.get('/stream', async function(ctx) {
   ctx.sse.send({ data: db.value, event: 'count_change' });
   db.subscribe(ctx.sse);
@@ -163,4 +158,4 @@ router.get('/stream', async function(ctx) {
 app
   .use(router.routes())
   .use(router.allowedMethods())
-  .listen(3000);
+  .listen(3000, () => console.log('\n[INFO] Server is listening on port 3000'));
