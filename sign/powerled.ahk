@@ -1,4 +1,4 @@
-#Include LibCon.ahk
+#Include lib/LibCon.ahk
 
 #NoEnv
 ; #Warn  ; Enable warnings to assist with detecting common errors.
@@ -9,11 +9,33 @@ SetWorkingDir %A_ScriptDir%
 ; #InstallKeybdHook
 ; #InstallMouseHook
 
+SmartStartConsole()
+
+CloseProgressWindow() {
+  Loop {
+    if WinExist("Progress ahk_exe PowerLedLTS.exe") {
+      WinActivate
+      if WinActive() {
+        puts("[AHK] Trying to close `Progress` window...")
+        WinClose
+      }
+      Sleep 500
+    } else {
+      Sleep 100
+      if WinExist("Progress ahk_exe PowerLedLTS.exe") {
+        CloseProgressWindow()
+      } else {
+        puts("[AHK] `Progress` window does not exist")
+      }
+      break
+    }
+  }
+}
+
 if (!WinActive("ahk_exe PowerLedLTS.exe"))
   WinActivate, ahk_exe PowerLedLTS.exe
 
-if WinActive("Progress ahk_exe PowerLedLTS.exe")
-  WinClose
+CloseProgressWindow()
 
 if WinActive("Error ahk_exe PowerLedLTS.exe")
   WinClose
@@ -27,15 +49,14 @@ Send, ^a
 Sleep, 10
 Send %1%
 Sleep, 10
-Click, 1576, 149
-; Click 1518, 158
-Sleep, 500
+; Click, 1576, 149
+Click 1518, 158
+Sleep 2000
 
-if WinActive("Progress ahk_exe PowerLedLTS.exe")
-  WinClose
+CloseProgressWindow()
 
+; TODO: title filtering is not working
 if WinActive("Error ahk_exe PowerLedLTS.exe")
-  WinClose
-  SmartStartConsole()
-  puts("ERROR: An unknown error occurred. Please try updating the sign manually for more information.")
+  ; WinClose
+  puts("[AHK] ERROR: An unknown error occurred. Please try updating the sign manually for more information.")
   ExitApp, 1
